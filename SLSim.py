@@ -4,7 +4,6 @@ import cv2
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import open3d as o3d
 from scipy.ndimage import map_coordinates
 import matplotlib.pyplot as plt
 
@@ -76,6 +75,28 @@ def apply_depth_attenuation(image, depth, Z0=0.8, gamma=1.0, min_val=0.2):
     attenuation = attenuation[:, :, np.newaxis]
     return (image.astype(np.float32) * attenuation).clip(0, 255).astype(np.uint8)
 
+def apply_depth_blur(image, depth, focus=1.0, strength=3):
+    norm_depth = (depth - depth.min()) / (depth.max() - depth.min())
+    blur_image = cv2.GaussianBlur(image, (5,5), strength)
+    alpha = np.clip((norm_depth - focus) * 5, 0, 1)[:,:,np.newaxis]
+    return (image * (1 - alpha) + blur_image * alpha).astype(np.uint8)
+
+def simulate_occlusion_blur(image, mask_ratio=0.05):
+    h, w, _ = image.shape
+    num_masks = np.random.randint(5, 20)
+    for _ in range(num_masks):
+        x1, y1 = np.random.randint(0, w), np.random.randint(0, h)
+        x2 = min(w, x1 + np.random.randint(10, 50))
+        y2 = min(h, y1 + np.random.randint(10, 50))
+        if np.random.rand() < 0.5:
+            # mask out
+            image[y1:y2, x1:x2] = 0
+        else:
+            # blur
+            patch = image[y1:y2, x1:x2]
+            image[y1:y2, x1:x2] = cv2.GaussianBlur(patch, (5,5), 3)
+    return image
+
 def main():
     path1 = ".//Data//rgb//0000003.jpg"
     image = cv2.imread(path1)#(512, 512, 3)
@@ -93,6 +114,8 @@ def main():
     u, v = project_to_pattern_plane(proj_points, K_proj)
     projected_image = sample_pattern(u, v, pattern)  # shape (H, W, 3)
     projected_image = apply_depth_attenuation(projected_image, proj_points[:, :, 2])
+    projected_image = apply_depth_blur(projected_image, proj_points[:, :, 2], focus=depth.min()+0.1, strength=3)
+    #projected_image = simulate_occlusion_blur(projected_image, mask_ratio=0.05)
 
     rgb_img = image.copy()
     overlay_img = cv2.addWeighted(rgb_img, 0.8, projected_image, 0.5, 0)
@@ -105,7 +128,7 @@ def main():
     plt.tight_layout()
     plt.show()
 
-    cv2.imwrite(".//generated//alacarteSim.png", overlay_img)
+    cv2.imwrite(".//generated//alacarte_DOF.png", overlay_img)
 
 if __name__ == "__main__":
     main()
