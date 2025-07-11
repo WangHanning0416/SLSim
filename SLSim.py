@@ -7,11 +7,6 @@ import torch.nn.functional as F
 from scipy.ndimage import map_coordinates
 import matplotlib.pyplot as plt
 
-intrinsics = np.array([[297.6375381033778,0.0,255.5,0.00],
-                       [0.0,297.6375381033778,255.5,0.00],
-                       [0.0 ,0.0             ,1.0  ,0.00],
-                       [0.00,0.00            ,0.00 ,1.00]])
-
 cam2proj = np.array([[1.00, 0.00, 0.00, 0.20],
                     [0.00, 1.00, 0.00, 0.00],
                     [0.00, 0.00, 1.00, -0.10],
@@ -97,6 +92,36 @@ def simulate_occlusion_blur(image, mask_ratio=0.05):
             image[y1:y2, x1:x2] = cv2.GaussianBlur(patch, (5,5), 3)
     return image
 
+def visualize_pattern_usage(u, v, pattern_shape):
+    """
+    显示哪些 pattern 图案区域在投影过程中被使用了
+
+    参数：
+        u, v: 反投影后 pattern 图像平面上的像素坐标（通常为浮点）
+        pattern_shape: pattern 图像的形状 (H, W)
+    """
+    h_pat, w_pat = pattern_shape[:2]
+    
+    # 将坐标转换为整数索引，并裁剪到合法范围
+    u_idx = np.round(u).astype(np.int32)
+    v_idx = np.round(v).astype(np.int32)
+
+    valid_mask = (u_idx >= 0) & (u_idx < w_pat) & (v_idx >= 0) & (v_idx < h_pat)
+
+    usage_map = np.zeros((h_pat, w_pat), dtype=np.uint8)
+    usage_map[v_idx[valid_mask], u_idx[valid_mask]] = 255
+
+    plt.figure(figsize=(8, 6))
+    plt.title("Pattern Usage Map")
+    plt.imshow(usage_map, cmap='gray')
+    plt.xlabel("Pattern Width")
+    plt.ylabel("Pattern Height")
+    plt.colorbar(label='Used (255) vs Unused (0)')
+    plt.tight_layout()
+    plt.show()
+
+    return usage_map
+
 def main():
     path1 = ".//Data//rgb//0000003.jpg"
     image = cv2.imread(path1)#(512, 512, 3)
@@ -104,31 +129,32 @@ def main():
     depth = cv2.imread(path2,cv2.IMREAD_UNCHANGED)#(512, 512)
     path3 = ".//Data//pattern//alacarte.png"
     pattern = cv2.imread(path3, cv2.IMREAD_UNCHANGED)#(1280,800)
+    intrinsics = np.array([[297.6375381033778,0.0,255.5,0.00],
+                            [0.0,297.6375381033778,255.5,0.00],
+                            [0.0 ,0.0             ,1.0  ,0.00],
+                            [0.00,0.00            ,0.00 ,1.00]])
     point_cloud = depth_to_point_cloud(depth, intrinsics)
 
     depth = depth.astype(np.float32) / 1000.0  # Convert depth to meters
 
     point_cloud = depth_to_point_cloud(depth, intrinsics)  # shape: (h, w, 3)
     proj_points = transform_point_cloud(point_cloud, cam2proj)  # shape: (h, w, 3)
-    K_proj = intrinsics[:3, :3]
+    K_proj = intrinsics = np.array([[680,0.0,590,0.00],
+                                    [0.0,380,350,0.00],
+                                    [0.0 ,0.0,1.0  ,0.00],
+                                    [0.00,0.00,0.00 ,1.00]])
     u, v = project_to_pattern_plane(proj_points, K_proj)
+    # usage_map = visualize_pattern_usage(u, v, pattern.shape)
+
     projected_image = sample_pattern(u, v, pattern)  # shape (H, W, 3)
     projected_image = apply_depth_attenuation(projected_image, proj_points[:, :, 2])
-    projected_image = apply_depth_blur(projected_image, proj_points[:, :, 2], focus=depth.min()+0.1, strength=3)
+    #projected_image = apply_depth_blur(projected_image, proj_points[:, :, 2], focus=depth.min()+0.1, strength=3)
     #projected_image = simulate_occlusion_blur(projected_image, mask_ratio=0.05)
 
     rgb_img = image.copy()
-    overlay_img = cv2.addWeighted(rgb_img, 0.8, projected_image, 0.5, 0)
+    overlay_img = cv2.addWeighted(rgb_img, 0.65, projected_image, 0.5, 0)
 
-    import matplotlib.pyplot as plt
-    plt.figure(figsize=(12, 6))
-    plt.title("RGB with Structured Light Projection")
-    plt.imshow(cv2.cvtColor(overlay_img, cv2.COLOR_BGR2RGB))
-    plt.axis("off")
-    plt.tight_layout()
-    plt.show()
-
-    cv2.imwrite(".//generated//alacarte_DOF.png", overlay_img)
+    cv2.imwrite(".//generated//alacarte_origin.png", overlay_img)
 
 if __name__ == "__main__":
     main()
